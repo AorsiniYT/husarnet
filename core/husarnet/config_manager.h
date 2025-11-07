@@ -89,6 +89,7 @@ using namespace nlohmann;  // json
 
 constexpr int periodicThreadIntervalMs = 800;
 constexpr auto getConfigRefreshPeriod = std::chrono::minutes(10);
+constexpr auto getConfigRetryPeriod = std::chrono::minutes(1);
 constexpr auto licenseRefreshPeriod = std::chrono::minutes(30);
 
 using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;

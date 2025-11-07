@@ -10,8 +10,16 @@
 #include <vector>
 
 #ifndef _WIN32
-#include <netinet/in.h>
-#include <sys/socket.h>
+// For PS Vita with LwIP, prevent macro conflicts
+#ifdef PSVITA_PLATFORM
+  // Include order matters: get socket definitions before LwIP macros
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #undef connect  // Undefine LwIP macro to avoid conflict with TcpConnection::connect()
+#else
+  #include <netinet/in.h>
+  #include <sys/socket.h>
+#endif
 #else
 #include <winsock2.h>
 

@@ -16,7 +16,10 @@ endif()
 # Don't set build optimization flags on ESP32 platform, they are provided by the ESP-IDF
 if(NOT DEFINED ESP_PLATFORM)
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(COMMONFLAGS "${COMMONFLAGS} -D_GLIBCXX_DEBUG -g -fsanitize=undefined")
+    set(COMMONFLAGS "${COMMONFLAGS} -D_GLIBCXX_DEBUG -g")
+    if(NOT (DEFINED PSVITA_PLATFORM AND PSVITA_PLATFORM))
+      set(COMMONFLAGS "${COMMONFLAGS} -fsanitize=undefined")
+    endif()
     # set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE "include-what-you-use") # TODO: Fix, test and enable
     # set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "ON" FORCE) # Enable printing full commands
   else()
@@ -102,6 +105,13 @@ if(DEFINED ESP_PLATFORM)
   list(APPEND husarnet_core_SRC ${port_esp32_SRC})
 endif()
 
+if(PSVITA_PLATFORM)
+  list(APPEND husarnet_core_include_DIRS ${CMAKE_CURRENT_LIST_DIR}/husarnet/ports/psvita)
+  file(GLOB port_psvita_SRC "${CMAKE_CURRENT_LIST_DIR}/husarnet/ports/psvita/*.cpp")
+  list(APPEND husarnet_core_SRC ${port_psvita_SRC})
+  # BUILD_HTTP_CONTROL_API remains FALSE for PS Vita
+endif()
+
 list(APPEND husarnet_core_include_DIRS ${CMAKE_CURRENT_LIST_DIR}/husarnet/ports)
 file(GLOB husarnet_ports_SRC "${CMAKE_CURRENT_LIST_DIR}/husarnet/ports/*.cpp")
 list(APPEND husarnet_core_SRC ${husarnet_ports_SRC})
@@ -139,7 +149,7 @@ if(DEFINED ESP_PLATFORM)
 else()
   set(husarnet_core "husarnet_core")
   add_library(${husarnet_core} STATIC ${husarnet_core_SRC})
-  include_directories(${husarnet_core_include_DIRS})
+  target_include_directories(${husarnet_core} PUBLIC ${husarnet_core_include_DIRS})
 endif()
 
 target_include_directories(${husarnet_core} PUBLIC ${TEMP_INCLUDE_DIR})
@@ -155,6 +165,10 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_definitions(${husarnet_core} PRIVATE DEBUG_BUILD=1)
+endif()
+
+if(DEFINED PSVITA_PLATFORM AND PSVITA_PLATFORM)
+  target_compile_options(${husarnet_core} PRIVATE -UDEBUG -U_DEBUG)
 endif()
 
 # Configure dependencies

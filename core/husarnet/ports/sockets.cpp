@@ -10,8 +10,13 @@
 
 namespace OsSocket {
 
+#ifdef PORT_PSVITA
+const bool useV6 = true;  // Now using LwIP IPv6 stack
+#else
+const bool useV6 = true;
+#endif
+
 #define AF_INETx AF_INET6
-  const bool useV6 = true;
 
   struct sockaddr_in6 makeSockaddr(InetAddress addr, bool v6 = useV6)
   {
@@ -60,9 +65,9 @@ namespace OsSocket {
 
       r.port = htons(st6->sin6_port);
       return r;
-    } else {
-      return InetAddress();
     }
+    // Invalid socket family, return default empty InetAddress
+    return InetAddress();
   }
 
   std::vector<UdpSocket> udpSockets;
@@ -77,6 +82,9 @@ namespace OsSocket {
 #ifdef PORT_WINDOWS
     unsigned long mode = 1;
     ioctlsocket(fd, FIONBIO, &mode);
+#elif defined(PORT_PSVITA)
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NONBLOCK, &one, sizeof(one));
 #else
     int flags = SOCKFUNC(fcntl)(fd, F_GETFL, 0);
     flags |= O_NONBLOCK;
@@ -89,6 +97,9 @@ namespace OsSocket {
 #ifdef PORT_WINDOWS
     unsigned long mode = 0;
     ioctlsocket(fd, FIONBIO, &mode);
+#elif defined(PORT_PSVITA)
+    int zero = 0;
+    setsockopt(fd, SOL_SOCKET, SO_NONBLOCK, &zero, sizeof(zero));
 #else
     int flags = SOCKFUNC(fcntl)(fd, F_GETFL, 0);
     flags &= ~O_NONBLOCK;
@@ -116,7 +127,9 @@ namespace OsSocket {
     set_nonblocking(fd);
 
     int off = 0;
+#ifndef PORT_PSVITA
     setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&off, sizeof(off));
+#endif
 
     auto sa = makeSockaddr(addr, useV6);
     socklen_t socklen = sizeof(sa);
@@ -178,6 +191,7 @@ namespace OsSocket {
         return false;
       }
     } else {
+#ifndef PORT_PSVITA
       int fd = bindUdpSocket(InetAddress{IpAddress::wildcard(), (uint16_t)address.port}, true);
       if(fd == -1)
         return false;
@@ -196,7 +210,11 @@ namespace OsSocket {
 #else
       return false;
 #endif
+#else
+      return false;
+#endif
     }
+    return false;  // Should not reach here
   }
 
   void udpSendMulticast(InetAddress address, const std::string& data)
@@ -491,7 +509,9 @@ namespace OsSocket {
 
     // neccessary for Windows
     int off = 0;
+#ifndef PORT_PSVITA
     setsockopt(conn->fd, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&off, sizeof(off));
+#endif
 
     int res = SOCKFUNC(connect)(conn->fd, (sockaddr*)(&sa), socklen);
 

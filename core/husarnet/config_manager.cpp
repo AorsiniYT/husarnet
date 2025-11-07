@@ -111,13 +111,36 @@ HusarnetAddress ConfigManager::getEbAddress() const
 
 void ConfigManager::getGetConfig()
 {
-  auto apiResponse = dashboardapi::getConfig(this->getApiAddress());
+  auto now = std::chrono::steady_clock::now();
+  auto apiAddress = this->getApiAddress();
+
+  if(apiAddress.isInvalid()) {
+    this->nextGetConfigUpdate = now + getConfigRetryPeriod;
+    return;
+  }
+
+#ifdef PSVITA_PLATFORM
+  if(!apiAddress.isMappedV4()) {
+    static bool warnedAboutIpv6Dashboard = false;
+    if(!warnedAboutIpv6Dashboard) {
+      LOG_WARNING(
+          "ConfigManagerDev: dashboard API address %s requires IPv6 which is unavailable on this platform; skipping fetch",
+          apiAddress.toString().c_str());
+      warnedAboutIpv6Dashboard = true;
+    }
+    this->nextGetConfigUpdate = now + getConfigRetryPeriod;
+    return;
+  }
+#endif
+
+  auto apiResponse = dashboardapi::getConfig(apiAddress);
   if(apiResponse.isSuccessful()) {
     this->storeGetConfig(apiResponse.getPayloadJson());
     this->updateGetConfigData();
-    this->nextGetConfigUpdate = std::chrono::steady_clock::now() + getConfigRefreshPeriod;
+    this->nextGetConfigUpdate = now + getConfigRefreshPeriod;
   } else {
     LOG_ERROR("ConfigManagerDev: API responded with error, details: %s", apiResponse.toString().c_str());
+    this->nextGetConfigUpdate = now + getConfigRetryPeriod;
   }
 }
 
