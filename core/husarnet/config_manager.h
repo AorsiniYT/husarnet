@@ -2,6 +2,7 @@
 // Authors: listed in project_root/README.md
 // License: specified in project_root/LICENSE.txt
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <string>
@@ -104,6 +105,11 @@ class ConfigManager {
   //   we might consider moving logic for storing them to port
   json userConfigJson = json({});
   json cacheJson = json({});
+
+  std::atomic<bool> configDirty{false};
+  std::atomic<bool> cacheDirty{false};
+
+  std::string dashboardHost;
 
   bool allowEveryone = false;  // flipped to true if control plane is disabled
   bool claimed = false;        // true if the device is claimed by a user

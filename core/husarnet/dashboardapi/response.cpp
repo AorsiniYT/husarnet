@@ -4,7 +4,10 @@
 
 #include "response.h"
 
+#include <vector>
+
 #include "husarnet/husarnet_config.h"
+#include "husarnet/logging.h"
 
 #include "etl/string.h"
 #include "etl/string_view.h"
@@ -15,9 +18,27 @@ namespace dashboardapi {
   Response::Response(int code, const std::string& bytes) : statusCode(code)
   {
     if(code == 200) {
-      jsonDoc = nlohmann::json::parse(bytes);
-    } else {
-      jsonDoc = nlohmann::json::parse("{}");
+      try {
+        jsonDoc = nlohmann::json::parse(bytes);
+        return;
+      } catch(const nlohmann::json::parse_error& ex) {
+        LOG_ERROR("dashboardapi::Response: failed to parse payload as JSON (code 200): %s", ex.what());
+        jsonDoc = nlohmann::json::object({
+            {"type", "parse_error"},
+            {"errors", std::vector<std::string>{"invalid JSON payload"}},
+        });
+        jsonDoc["raw_body"] = bytes;
+        return;
+      }
+    }
+
+    jsonDoc = nlohmann::json::object({
+        {"type", "http_error"},
+        {"status_code", code},
+        {"errors", std::vector<std::string>{"unexpected HTTP status"}},
+    });
+    if(!bytes.empty()) {
+      jsonDoc["raw_body"] = bytes;
     }
   }
   bool Response::isSuccessful() const
@@ -25,31 +46,51 @@ namespace dashboardapi {
     if(this->statusCode != 200) {
       return false;
     }
-    return jsonDoc["type"].get<std::string>() == "success";
+    auto typeIt = jsonDoc.find("type");
+    if(typeIt == jsonDoc.end() || !typeIt->is_string()) {
+      return false;
+    }
+    return *typeIt == "success";
   }
 
   nlohmann::json& Response::getPayloadJson()
   {
+    if(!this->jsonDoc.contains("payload")) {
+      this->jsonDoc["payload"] = nlohmann::json::object();
+    }
     return this->jsonDoc["payload"];
   }
 
   std::string Response::toString()
   {
     std::string result{};
-    if(jsonDoc["type"] == "user_error") {
+    const auto typeStr = jsonDoc.value("type", std::string("unknown"));
+    if(typeStr == "user_error") {
       result += "invalid request: ";
-    } else if(jsonDoc["type"] == "server_error") {
+    } else if(typeStr == "server_error") {
       result += "server error: ";
-    } else if(jsonDoc["type"] == nullptr) {
+    } else if(typeStr == "parse_error") {
+      result += "parse error: ";
+    } else if(typeStr == "http_error") {
+      result += "http error: ";
+    } else if(jsonDoc.contains("type") && jsonDoc["type"].is_null()) {
       result += "unknown error type null";
       return result;
     } else {
       result += "unknown api error: ";
     }
 
-    auto errors = jsonDoc["errors"].get<std::vector<std::string>>();
-    for(auto& err : errors) {
-      result += err;
+    if(jsonDoc.contains("errors") && jsonDoc["errors"].is_array()) {
+      auto errors = jsonDoc["errors"].get<std::vector<std::string>>();
+      for(auto& err : errors) {
+        result += err;
+        result.push_back(' ');
+      }
+    }
+
+    if(auto rawIt = jsonDoc.find("raw_body"); rawIt != jsonDoc.end() && rawIt->is_string()) {
+      result += "raw=";
+      result += rawIt->get<std::string>();
     }
 
     return result;
@@ -58,6 +99,12 @@ namespace dashboardapi {
   Response getConfig(HusarnetAddress apiAddress)
   {
     auto [statusCode, bytes] = Port::httpGet(apiAddress, "/device/get_config");
+    return {statusCode, bytes};
+  }
+
+  Response getConfig(const std::string& host)
+  {
+    auto [statusCode, bytes] = Port::httpGet(host, "/device/get_config");
     return {statusCode, bytes};
   }
 

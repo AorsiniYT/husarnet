@@ -127,7 +127,12 @@ namespace OsSocket {
 
   void bindCustomFd(int fd, std::function<void()> readyCallback);
 
+#ifdef PSVITA_PLATFORM
+  // PS Vita: Use a wrapper for sockaddr_storage to avoid incomplete type issues
+  InetAddress ipFromSockaddr(const void* sockaddr_ptr);
+#else
   InetAddress ipFromSockaddr(struct sockaddr_storage st);
+#endif
 
   void runOnce(int timeout);
 

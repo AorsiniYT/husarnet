@@ -1,4 +1,6 @@
 build/
+cmake-build-*/
+dump-analysis/
 unix/build/
 default_wifi_config.h
 /notes.md

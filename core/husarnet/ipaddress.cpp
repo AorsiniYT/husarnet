@@ -3,14 +3,41 @@
 // License: specified in project_root/LICENSE.txt
 #include "husarnet/ipaddress.h"
 
+#include <cstdint>
+
 #ifdef _WIN32
 #include <winsock.h>
 #else
 #include <netinet/in.h>
 #endif
 
+// Portable byte-order conversion functions
+// These are defined here to avoid conflicts with multiple definitions in different headers
+#ifndef HTONL_DEFINED
+#define HTONL_DEFINED
+
+namespace {
+  // Use compiler built-in if available, otherwise provide portable implementation
+  inline uint32_t portable_htonl(uint32_t host) {
+    #if defined(__GNUC__) && __GNUC__ >= 4
+    return __builtin_bswap32(host);
+    #else
+    return ((host & 0xff) << 24) |
+           ((host & 0xff00) << 8) |
+           ((host & 0xff0000) >> 8) |
+           ((host >> 24) & 0xff);
+    #endif
+  }
+}
+
+// Override standard htonl if it's not available
+#ifndef htonl
+#define htonl(x) portable_htonl(x)
+#endif
+
+#endif /* HTONL_DEFINED */
+
 // Default initialization sets one of "Documentation" Ipv6 reserved addresses (3fff::)
-// This value does not make sense in a real system, contrary to :: (all zeroes)
 // Which can be valid sometimes
 // Always use isValid() and other checks to verify if the instance is valid
 // DO NOT compare the underlying data value directly

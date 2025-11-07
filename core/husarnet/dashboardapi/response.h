@@ -26,6 +26,7 @@ namespace dashboardapi {
   };
 
   Response getConfig(HusarnetAddress apiAddress);
+  Response getConfig(const std::string& host);
   Response postHeartbeat(HusarnetAddress apiAddress, Identity* identity);
   Response postClaim(
       HusarnetAddress apiAddress,

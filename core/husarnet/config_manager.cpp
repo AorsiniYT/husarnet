@@ -3,6 +3,9 @@
 // License: specified in project_root/LICENSE.txt
 #include "husarnet/config_manager.h"
 
+#include <algorithm>
+#include <cctype>
+
 #include <etl/string.h>
 #include <sockets.h>
 
@@ -11,6 +14,42 @@
 #include "husarnet/licensing.h"
 
 #include "ngsocket_messages.h"
+
+namespace {
+  std::string extractHostFromUrl(const std::string& url)
+  {
+    if(url.empty()) {
+      return {};
+    }
+
+    size_t start = 0;
+    auto schemePos = url.find("://");
+    if(schemePos != std::string::npos) {
+      start = schemePos + 3;
+    }
+
+    if(start >= url.size()) {
+      return {};
+    }
+
+    auto hostPort = url.substr(start);
+    auto slashPos = hostPort.find('/');
+    if(slashPos != std::string::npos) {
+      hostPort = hostPort.substr(0, slashPos);
+    }
+
+    // Trim whitespace just in case
+    auto trimIt = std::find_if_not(hostPort.begin(), hostPort.end(), [](unsigned char ch) {
+      return std::isspace(ch) != 0;
+    });
+    hostPort.erase(hostPort.begin(), trimIt);
+    while(!hostPort.empty() && std::isspace(static_cast<unsigned char>(hostPort.back())) != 0) {
+      hostPort.pop_back();
+    }
+
+    return hostPort;
+  }
+}  // namespace
 
 ConfigManager::ConfigManager(HooksManager* hooksManager, const ConfigEnv* configEnv, HusarnetAddress ourIp)
     : hooksManager(hooksManager),
@@ -51,6 +90,7 @@ void ConfigManager::storeLicense(const nlohmann::json& jsonDoc)
 {
   std::lock_guard lgSlow(this->mutexSlow);
   this->cacheJson[CACHE_KEY_LICENSE] = jsonDoc;
+  this->cacheDirty.store(true, std::memory_order_relaxed);
 }
 
 // TODO: discuss: might also be renamed to updateControlPlaneData
@@ -66,26 +106,56 @@ void ConfigManager::updateLicenseData()
 
   const auto& ebServerIps = licenseJson[LICENSE_EB_SERVERS_KEY].get<std::vector<std::string>>();
   this->ebAddresses.clear();
-  for(auto& ipStr : ebServerIps) {
+  for(size_t idx = 0; idx < ebServerIps.size(); ++idx) {
+    auto& ipStr = ebServerIps[idx];
     const auto ip = HusarnetAddress::parse(ipStr);
     this->ebAddresses.push_back(ip);
     this->allowedPeers.insert(ip);
+    LOG_INFO(
+        "ConfigManagerDev: license EB address[%u] %s mappedV4=%d",
+        static_cast<unsigned>(idx),
+        ipStr.c_str(),
+        ip.isMappedV4());
   }
 
   const auto& apiServerIps = licenseJson[LICENSE_API_SERVERS_KEY].get<std::vector<std::string>>();
 
   this->apiAddresses.clear();
-  for(auto& ipStr : apiServerIps) {
+  for(size_t idx = 0; idx < apiServerIps.size(); ++idx) {
+    auto& ipStr = apiServerIps[idx];
     const auto ip = HusarnetAddress::parse(ipStr);
     this->apiAddresses.push_back(ip);
     this->allowedPeers.insert(ip);
+    LOG_INFO(
+        "ConfigManagerDev: license API address[%u] %s mappedV4=%d",
+        static_cast<unsigned>(idx),
+        ipStr.c_str(),
+        ip.isMappedV4());
   }
 
   const auto baseServerIps = licenseJson[LICENSE_BASE_SERVER_ADDRESSES_KEY].get<std::vector<std::string>>();
 
   this->baseAddresses.clear();
-  for(auto& ip : baseServerIps) {
-    this->baseAddresses.push_back(InternetAddress::parse(ip));
+  for(size_t idx = 0; idx < baseServerIps.size(); ++idx) {
+    auto& ip = baseServerIps[idx];
+    auto parsed = InternetAddress::parse(ip);
+    this->baseAddresses.push_back(parsed);
+    LOG_INFO(
+        "ConfigManagerDev: license base address[%u] %s mappedV4=%d",
+        static_cast<unsigned>(idx),
+        ip.c_str(),
+        parsed.isMappedV4());
+  }
+
+  if(licenseJson.contains(LICENSE_DASHBOARD_URL_KEY) && licenseJson[LICENSE_DASHBOARD_URL_KEY].is_string()) {
+    auto url = licenseJson[LICENSE_DASHBOARD_URL_KEY].get<std::string>();
+    this->dashboardHost = extractHostFromUrl(url);
+    LOG_INFO(
+        "ConfigManagerDev: license dashboard host %s from %s",
+        this->dashboardHost.c_str(),
+        url.c_str());
+  } else {
+    this->dashboardHost.clear();
   }
 }
 
@@ -112,15 +182,55 @@ HusarnetAddress ConfigManager::getEbAddress() const
 void ConfigManager::getGetConfig()
 {
   auto now = std::chrono::steady_clock::now();
-  auto apiAddress = this->getApiAddress();
+  auto processResponse = [&](dashboardapi::Response response, const char* sourceLabel) {
+    if(response.isSuccessful()) {
+      this->storeGetConfig(response.getPayloadJson());
+      this->updateGetConfigData();
+      this->nextGetConfigUpdate = now + getConfigRefreshPeriod;
+      LOG_INFO("ConfigManagerDev: dashboard fetch via %s succeeded", sourceLabel);
+      return true;
+    }
 
+    LOG_ERROR(
+        "ConfigManagerDev: dashboard fetch via %s failed, details: %s",
+        sourceLabel,
+        response.toString().c_str());
+    this->nextGetConfigUpdate = now + getConfigRetryPeriod;
+    return false;
+  };
+
+  auto apiAddress = this->getApiAddress();
   if(apiAddress.isInvalid()) {
+    LOG_WARNING("ConfigManagerDev: dashboard API address list empty, evaluating fallback options");
+#ifdef PSVITA_PLATFORM
+    if(!this->dashboardHost.empty()) {
+      LOG_WARNING(
+          "ConfigManagerDev: using dashboard host fallback %s because API address list is empty",
+          this->dashboardHost.c_str());
+      processResponse(dashboardapi::getConfig(this->dashboardHost), "hostname fallback");
+      return;
+    }
+#endif
     this->nextGetConfigUpdate = now + getConfigRetryPeriod;
     return;
   }
 
+  LOG_INFO(
+      "ConfigManagerDev: evaluating dashboard API %s mappedV4=%d",
+      apiAddress.toString().c_str(),
+      apiAddress.isMappedV4());
+
 #ifdef PSVITA_PLATFORM
   if(!apiAddress.isMappedV4()) {
+    if(!this->dashboardHost.empty()) {
+      LOG_WARNING(
+          "ConfigManagerDev: dashboard API %s requires IPv6; attempting hostname fallback %s",
+          apiAddress.toString().c_str(),
+          this->dashboardHost.c_str());
+      processResponse(dashboardapi::getConfig(this->dashboardHost), "hostname fallback");
+      return;
+    }
+
     static bool warnedAboutIpv6Dashboard = false;
     if(!warnedAboutIpv6Dashboard) {
       LOG_WARNING(
@@ -133,15 +243,7 @@ void ConfigManager::getGetConfig()
   }
 #endif
 
-  auto apiResponse = dashboardapi::getConfig(apiAddress);
-  if(apiResponse.isSuccessful()) {
-    this->storeGetConfig(apiResponse.getPayloadJson());
-    this->updateGetConfigData();
-    this->nextGetConfigUpdate = now + getConfigRefreshPeriod;
-  } else {
-    LOG_ERROR("ConfigManagerDev: API responded with error, details: %s", apiResponse.toString().c_str());
-    this->nextGetConfigUpdate = now + getConfigRetryPeriod;
-  }
+  processResponse(dashboardapi::getConfig(apiAddress), "api address");
 }
 
 void ConfigManager::updateGetConfigData()
@@ -208,6 +310,7 @@ void ConfigManager::storeGetConfig(const json& jsonDoc)
 {
   std::lock_guard lgSlow(this->mutexSlow);
   this->cacheJson[CACHE_KEY_GETCONFIG] = jsonDoc;
+  this->cacheDirty.store(true, std::memory_order_relaxed);
 }
 
 bool ConfigManager::readUserConfig()
@@ -228,9 +331,25 @@ bool ConfigManager::readUserConfig()
 
 void ConfigManager::storeUserConfig(const json& jsonDoc)
 {
-  std::lock_guard lgSlow(this->mutexSlow);
-  if(jsonDoc.contains(USERCONFIG_KEY_WHITELIST) && jsonDoc[USERCONFIG_KEY_WHITELIST].is_array()) {
-    this->userConfigJson[USERCONFIG_KEY_WHITELIST] = jsonDoc[USERCONFIG_KEY_WHITELIST];
+  bool changed = false;
+  {
+    std::lock_guard lgSlow(this->mutexSlow);
+    if(jsonDoc.contains(USERCONFIG_KEY_WHITELIST) && jsonDoc[USERCONFIG_KEY_WHITELIST].is_array()) {
+      if(!this->userConfigJson.contains(USERCONFIG_KEY_WHITELIST) ||
+         this->userConfigJson[USERCONFIG_KEY_WHITELIST] != jsonDoc[USERCONFIG_KEY_WHITELIST]) {
+        this->userConfigJson[USERCONFIG_KEY_WHITELIST] = jsonDoc[USERCONFIG_KEY_WHITELIST];
+        changed = true;
+      }
+    } else if(this->userConfigJson.contains(USERCONFIG_KEY_WHITELIST)) {
+      this->userConfigJson.erase(USERCONFIG_KEY_WHITELIST);
+      changed = true;
+    }
+    if(changed) {
+      this->configDirty.store(true, std::memory_order_relaxed);
+    }
+  }
+  if(changed) {
+    this->updateUserConfigData();
   }
 }
 
@@ -238,17 +357,21 @@ void ConfigManager::updateUserConfigData()
 {
   std::lock_guard lgSlow(this->mutexSlow);
   std::lock_guard lgFast(this->mutexFast);
-  if(this->userConfigJson.contains(USERCONFIG_KEY_WHITELIST) &&
-     this->userConfigJson[USERCONFIG_KEY_WHITELIST].is_array()) {
-    this->userWhitelist.clear();
-    auto entries = this->userConfigJson[USERCONFIG_KEY_WHITELIST].get<std::vector<std::string>>();
-    for(auto& entry : entries) {
-      auto addr = HusarnetAddress::parse(entry);
-      if(addr.isFC94()) {
-        this->userWhitelist.insert(addr);
-      } else {
-        LOG_WARNING("user whitelist contains invalid Husarnet address %s", entry.c_str());
-      }
+
+  this->userWhitelist.clear();
+
+  if(!this->userConfigJson.contains(USERCONFIG_KEY_WHITELIST) ||
+     !this->userConfigJson[USERCONFIG_KEY_WHITELIST].is_array()) {
+    return;
+  }
+
+  auto entries = this->userConfigJson[USERCONFIG_KEY_WHITELIST].get<std::vector<std::string>>();
+  for(auto& entry : entries) {
+    auto addr = HusarnetAddress::parse(entry);
+    if(addr.isFC94()) {
+      this->userWhitelist.insert(addr);
+    } else {
+      LOG_WARNING("user whitelist contains invalid Husarnet address %s", entry.c_str());
     }
   }
 }
@@ -393,15 +516,24 @@ void ConfigManager::periodicThread()
     if(this->configEnv->getEnableControlplane() && now >= this->nextGetConfigUpdate) {
       LOG_DEBUG("ConfigManagerDev: periodic thread: will request the config from the control plane");
       this->getGetConfig();
+    }
 
-      // Flush to disk
+    if(this->configDirty.exchange(false, std::memory_order_acq_rel)) {
       if(this->writeConfig()) {
         LOG_DEBUG("ConfigManagerDev: config write successful")
       } else {
         LOG_ERROR("ConfigManagerDev: config write failed")
+        this->configDirty.store(true, std::memory_order_relaxed);
       }
+    }
 
-      this->writeCache();  // best-effort
+    if(this->cacheDirty.exchange(false, std::memory_order_acq_rel)) {
+      if(this->writeCache()) {
+        LOG_DEBUG("ConfigManagerDev: cache write successful")
+      } else {
+        LOG_ERROR("ConfigManagerDev: cache write failed")
+        this->cacheDirty.store(true, std::memory_order_relaxed);
+      }
     }
   }
 }

@@ -14,7 +14,6 @@
 #include "husarnet/logging.h"
 
 #include "etl/map.h"
-#include "nlohmann/json.hpp"
 
 using Time = int64_t;
 

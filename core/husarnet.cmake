@@ -40,8 +40,13 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL Windows)
   set(CMAKE_CXX_STANDARD_LIBRARIES "-static-libgcc -static-libstdc++ -lwsock32 -lws2_32 ${CMAKE_CXX_STANDARD_LIBRARIES}")
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror=return-type -Wno-sign-compare ${COMMONFLAGS}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall ${COMMONFLAGS}")
+if(DEFINED PSVITA_PLATFORM AND PSVITA_PLATFORM)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-sign-compare -fpermissive -Wno-error")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
+else()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror=return-type -Wno-sign-compare ${COMMONFLAGS}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall ${COMMONFLAGS}")
+endif()
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL Linux)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${COMMONFLAGS} -lrt")
@@ -110,11 +115,14 @@ if(PSVITA_PLATFORM)
   file(GLOB port_psvita_SRC "${CMAKE_CURRENT_LIST_DIR}/husarnet/ports/psvita/*.cpp")
   list(APPEND husarnet_core_SRC ${port_psvita_SRC})
   # BUILD_HTTP_CONTROL_API remains FALSE for PS Vita
+  # Note: PS Vita has its own socket implementation, exclude generic sockets.cpp
+  # But still need the port headers directory
+  list(APPEND husarnet_core_include_DIRS ${CMAKE_CURRENT_LIST_DIR}/husarnet/ports)
+else()
+  list(APPEND husarnet_core_include_DIRS ${CMAKE_CURRENT_LIST_DIR}/husarnet/ports)
+  file(GLOB husarnet_ports_SRC "${CMAKE_CURRENT_LIST_DIR}/husarnet/ports/*.cpp")
+  list(APPEND husarnet_core_SRC ${husarnet_ports_SRC})
 endif()
-
-list(APPEND husarnet_core_include_DIRS ${CMAKE_CURRENT_LIST_DIR}/husarnet/ports)
-file(GLOB husarnet_ports_SRC "${CMAKE_CURRENT_LIST_DIR}/husarnet/ports/*.cpp")
-list(APPEND husarnet_core_SRC ${husarnet_ports_SRC})
 
 list(APPEND husarnet_core_include_DIRS ${CMAKE_CURRENT_LIST_DIR}/husarnet/dashboardapi)
 file(GLOB husarnet_dashboardapi_SRC "${CMAKE_CURRENT_LIST_DIR}/husarnet/dashboardapi/*.cpp")
@@ -217,9 +225,17 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL Darwin)
   target_link_libraries(${husarnet_core} stdc++)
 endif()
 
+# ARM compiler (PS Vita) has compatibility issues with nlohmann_json v3.11.3
+# Use v3.11.2 for PS Vita, v3.11.3 for other platforms
+if(DEFINED PSVITA_PLATFORM AND PSVITA_PLATFORM)
+  set(NLOHMANN_VERSION "v3.11.2")
+else()
+  set(NLOHMANN_VERSION "v3.11.3")
+endif()
+
 FetchContent_Declare(
   nlohmann_json
-  URL https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.zip
+  URL https://github.com/nlohmann/json/archive/refs/tags/${NLOHMANN_VERSION}.zip
 )
 set(JSON_BuildTests OFF)
 FetchContent_MakeAvailable(nlohmann_json)

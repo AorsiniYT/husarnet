@@ -38,6 +38,9 @@ else
   exit 1
 fi
 
+git config --global --add safe.directory /app
+git config --global --add safe.directory '*'
+
 cmake -G "Ninja" \
   -DCMAKE_TOOLCHAIN_FILE=${source_dir}/arch_${arch}.cmake \
   -DCMAKE_INSTALL_PREFIX=${output_dir} \

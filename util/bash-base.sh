@@ -55,5 +55,7 @@ update_version
 in_ci=${CI:-false}
 
 function docker_builder() {
-  docker run --rm -it --privileged --volume ${base_dir}:/app ghcr.io/husarnet/husarnet:builder ${@}
+  local script=$1
+  shift
+  docker run --rm -it --privileged --user 0:0 --volume ${base_dir}:/app --entrypoint $script ghcr.io/husarnet/husarnet:builder "$@"
 }
