@@ -5,6 +5,8 @@ if [ ! "$#" -eq 1 ]; then
     exit 1
 fi
 
+git config --global --add safe.directory '*'
+
 build_type=$1
 platform=windows
 arch=win64

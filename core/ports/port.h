@@ -28,3 +28,9 @@
 #define PORT_NAME "MacOS"
 #include "husarnet/ports/macos/port.h"
 #endif
+
+#ifdef PSVITA_PLATFORM
+#define PORT_PSVITA
+#define PORT_NAME "PSVita"
+#include "husarnet/ports/psvita/port.h"
+#endif

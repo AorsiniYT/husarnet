@@ -1,4 +1,6 @@
-build/
+*build*/
+*dump*/
+reference/
 unix/build/
 default_wifi_config.h
 /notes.md

@@ -82,9 +82,17 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL ESP32)
   list(APPEND husarnet_core_SRC ${port_esp32_SRC})
 endif()
 
-include_directories(${CMAKE_CURRENT_LIST_DIR}/ports)
-file(GLOB husarnet_ports_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/*.cpp")
-list(APPEND husarnet_core_SRC ${husarnet_ports_SRC})
+if(PSVITA_PLATFORM)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/ports/psvita)
+  file(GLOB port_psvita_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/psvita/*.cpp")
+  list(APPEND husarnet_core_SRC ${port_psvita_SRC})
+endif()
+
+if(NOT PSVITA_PLATFORM)
+  include_directories(${CMAKE_CURRENT_LIST_DIR}/ports)
+  file(GLOB husarnet_ports_SRC "${CMAKE_CURRENT_LIST_DIR}/ports/*.cpp")
+  list(APPEND husarnet_core_SRC ${husarnet_ports_SRC})
+endif()
 
 include_directories(${CMAKE_CURRENT_LIST_DIR}/privileged)
 file(GLOB husarnet_privileged_SRC "${CMAKE_CURRENT_LIST_DIR}/privileged/*.cpp")
@@ -100,6 +108,11 @@ endif()
 include_directories(${CMAKE_CURRENT_LIST_DIR})
 
 file(GLOB core_SRC "${CMAKE_CURRENT_LIST_DIR}/*.cpp")
+if(PSVITA_PLATFORM)
+  list(REMOVE_ITEM core_SRC "${CMAKE_CURRENT_LIST_DIR}/licensing.cpp")
+  list(REMOVE_ITEM core_SRC "${CMAKE_CURRENT_LIST_DIR}/notification_manager.cpp")
+  list(REMOVE_ITEM core_SRC "${CMAKE_CURRENT_LIST_DIR}/websetup.cpp")
+endif()
 list(APPEND husarnet_core_SRC ${core_SRC})
 
 # "Aliasing" (copying) core folder as "husarnet"

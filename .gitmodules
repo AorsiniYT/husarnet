@@ -1,0 +1,7 @@
+[submodule "platforms/psvita/third_party/lwip-contrib"]
+	path = platforms/psvita/third_party/lwip-contrib
+	url = https://github.com/AorsiniYT/lwip-contrib.git
+	branch = vita
+[submodule "platforms/psvita/third_party/lwip"]
+	path = platforms/psvita/third_party/lwip
+	url = https://github.com/lwip-tcpip/lwip.git
